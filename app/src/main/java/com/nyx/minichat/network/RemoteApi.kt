@@ -5,6 +5,8 @@ import com.nyx.minichat.data.ChatSummary
 import com.nyx.minichat.data.Role
 import com.nyx.minichat.data.roleFromApiString
 import com.nyx.minichat.data.toApiString
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonArray
@@ -63,7 +65,7 @@ class RemoteApi(private val baseUrl: String) {
         path: String,
         method: String = "GET",
         bodyJson: String? = null,
-    ): String {
+    ): String = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(url(path))
         when (method) {
             "GET" -> builder.get()
@@ -79,7 +81,7 @@ class RemoteApi(private val baseUrl: String) {
             }.getOrNull() ?: "Request failed (${response.code})"
             throw ApiException(errMsg, response.code)
         }
-        return text
+        text
     }
 
     // ---------------- Gate ----------------
@@ -232,12 +234,19 @@ class RemoteApi(private val baseUrl: String) {
             .post(bodyJson.toRequestBody(jsonMedia))
             .build()
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                val text = response.body?.string()?.take(200) ?: ""
-                throw ApiException("Chat request failed: $text", response.code)
+        // Only the blocking .execute() call needs to move off the main
+        // thread; SseReader.read below calls onToken(), which updates
+        // Compose state and should run on the caller's original dispatcher
+        // (StateFlow updates from a background thread are safe, but
+        // keeping this off Dispatchers.IO avoids surprises for callers
+        // that assume Main).
+        val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+        response.use {
+            if (!it.isSuccessful) {
+                val text = withContext(Dispatchers.IO) { it.body?.string()?.take(200) ?: "" }
+                throw ApiException("Chat request failed: $text", it.code)
             }
-            val body = response.body ?: throw IOException("Empty response body")
+            val body = it.body ?: throw IOException("Empty response body")
             SseReader.read(body, adapter = adapter, onToken = onToken)
         }
     }

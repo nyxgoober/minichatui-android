@@ -2,6 +2,8 @@ package com.nyx.minichat.network
 
 import com.nyx.minichat.data.ChatMessage
 import com.nyx.minichat.data.toApiString
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -71,12 +73,13 @@ class ProviderClient {
         headers.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
         val request = requestBuilder.post(bodyJson.toString().toRequestBody(jsonMedia)).build()
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                val text = response.body?.string()?.take(200) ?: ""
-                throw IOException("Provider request failed (${response.code}): $text")
+        val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+        response.use {
+            if (!it.isSuccessful) {
+                val text = withContext(Dispatchers.IO) { it.body?.string()?.take(200) ?: "" }
+                throw IOException("Provider request failed (${it.code}): $text")
             }
-            val body = response.body ?: throw IOException("Empty response body")
+            val body = it.body ?: throw IOException("Empty response body")
             SseReader.read(body, adapter, onToken)
         }
     }

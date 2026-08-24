@@ -1,5 +1,7 @@
 package com.nyx.minichat.network
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -19,8 +21,14 @@ object SseReader {
 
     suspend fun read(body: ResponseBody, adapter: String, onToken: suspend (String) -> Unit) {
         val source = body.source()
-        while (!source.exhausted()) {
-            val line = source.readUtf8Line() ?: break
+        while (true) {
+            // Only the blocking socket read moves to Dispatchers.IO; onToken
+            // runs back on the caller's original dispatcher so it can safely
+            // touch Compose state (e.g. Main).
+            val line = withContext(Dispatchers.IO) {
+                if (source.exhausted()) null else source.readUtf8Line()
+            } ?: break
+
             val trimmed = line.trim()
             if (!trimmed.startsWith("data:")) continue
             val payload = trimmed.substring(5).trim()
