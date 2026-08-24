@@ -106,13 +106,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitServerUrlAndGate(url: String, gatePassword: String, onError: (String) -> Unit) {
         viewModelScope.launch {
+            val normalizedUrl = url.trim().let {
+                if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it"
+            }
             runCatching {
-                settings.setServerUrl(url)
-                val api = RemoteApi(url)
+                settings.setServerUrl(normalizedUrl)
+                val api = RemoteApi(normalizedUrl)
                 api.gate(gatePassword)
                 remoteApi = api
                 _screen.value = AppScreen.RemoteLogin
-            }.onFailure { e -> onError(e.message ?: "Could not reach server") }
+            }.onFailure { e ->
+                val detail = e.message ?: e.javaClass.simpleName
+                onError("Could not connect: $detail")
+            }
         }
     }
 
